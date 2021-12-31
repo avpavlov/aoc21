@@ -17,7 +17,7 @@ func check(e error) {
 func ReadLines(fileName string) []string {
 	dat, err := os.ReadFile(fileName)
 	check(err)
-	return strings.Split(string(dat), "\n")
+	return strings.Split(strings.ReplaceAll(string(dat), "\r", ""), "\n")
 }
 
 func SplitPair(text string, delim string) (string, string) {
