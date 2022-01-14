@@ -21,103 +21,96 @@ type State struct {
 	x, y, z, w value_t
 }
 
-const registerX = 0
-const registerY = 1
-const registerZ = 2
-const registerW = 3
-
-const operationAdd = 4
-const operationMul = 5
-const operationDiv = 6
-const operationMod = 7
-const operationEql = 8
-const operationInp = 9
-
-var registers = map[string]byte{"x": registerX, "y": registerY, "z": registerZ, "w": registerW}
-var commands = map[string]byte{"inp": operationInp, "mul": operationMul, "add": operationAdd, "div": operationDiv, "mod": operationMod, "eql": operationEql}
-
-func get(state *State, register byte) value_t {
-	switch register {
-	case registerX:
-		return state.x
-	case registerY:
-		return state.y
-	case registerZ:
-		return state.z
-	case registerW:
-		return state.w
-	default:
-		panic("Unknown register")
-	}
+type Register struct {
+	get func(state *State) value_t
+	set func(state *State, val value_t)
 }
 
-func set(state *State, register byte, value value_t) {
-	switch register {
-	case registerX:
-		state.x = value
-	case registerY:
-		state.y = value
-	case registerZ:
-		state.z = value
-	case registerW:
-		state.w = value
-	default:
-		panic("Unknown register")
-	}
+var registers = map[string]Register{
+	"x": {get: func(state *State) value_t { return state.x }, set: func(state *State, val value_t) { state.x = val }},
+	"y": {get: func(state *State) value_t { return state.y }, set: func(state *State, val value_t) { state.y = val }},
+	"z": {get: func(state *State) value_t { return state.z }, set: func(state *State, val value_t) { state.z = val }},
+	"w": {get: func(state *State) value_t { return state.w }, set: func(state *State, val value_t) { state.w = val }},
 }
 
-func calc(operation byte, v1, v2 value_t) value_t {
-	switch operation {
-	case operationAdd:
-		res := v1 + v2
-		if (res - v2) != v1 {
-			panic(fmt.Sprintf("res=%d op1=%d op2=%d", res, v1, v2))
-		}
-		return res
-	case operationMul:
+type Command func(v1, v2 value_t) value_t
+
+var commands = map[string]Command{
+	"mul": func(v1, v2 value_t) value_t {
 		res := v1 * v2
 		if v2 != 0 && (res/v2) != v1 {
 			panic(fmt.Sprintf("res=%d op1=%d op2=%d", res, v1, v2))
 		}
 		return res
-	case operationDiv:
-		return v1 / v2
-	case operationMod:
-		return v1 % v2
-	case operationEql:
+	},
+	"add": func(v1, v2 value_t) value_t {
+		res := v1 + v2
+		if (res - v2) != v1 {
+			panic(fmt.Sprintf("res=%d op1=%d op2=%d", res, v1, v2))
+		}
+		return res
+	},
+	"div": func(v1, v2 value_t) value_t { return v1 / v2 },
+	"mod": func(v1, v2 value_t) value_t { return v1 % v2 },
+	"set": func(v1, v2 value_t) value_t { return v2 },
+	"eql": func(v1, v2 value_t) value_t {
 		if v1 == v2 {
 			return 1
 		} else {
 			return 0
 		}
-	default:
-		panic("Unknown command")
-	}
+	},
+	"neq": func(v1, v2 value_t) value_t {
+		if v1 != v2 {
+			return 1
+		} else {
+			return 0
+		}
+	},
 }
 
-func parseOperands(reg string, regOrConst string) (register1 byte, useRegister2 bool, register2 byte, value2 value_t) {
+func parseOperands(reg string, regOrConst string) (register1 *Register, useRegister2 bool, register2 *Register, value2 value_t) {
 	operand1, isRegister := registers[reg]
 	if !isRegister {
 		panic(reg)
 	}
 	if operand2, isRegister := registers[regOrConst]; isRegister {
-		return operand1, true, operand2, 0
+		return &operand1, true, &operand2, 0
 	} else {
-		return operand1, false, 0, value_t(ParseInt64(regOrConst))
+		return &operand1, false, nil, value_t(ParseInt64(regOrConst))
 	}
 }
 
 func solve_d24(filename string, reduceFn func(v1, v2 int64) int64) int64 {
+	var lines = ReadLines(filename)
+	tokenizedLines := make([][]string, 0, len(lines))
+	for _, line := range lines {
+		parts := strings.Split(line, " ")
+		tokenizedLines = append(tokenizedLines, parts)
+	}
+	lastToken := len(tokenizedLines) - 1
 	states := []State{{0, 0, 0, 0}}
 	statesSerials := []int64{0}
-	var lines = ReadLines(filename)
-	for i, line := range lines {
-		parts := strings.Split(line, " ")
-		log.Printf("%d of %d %s, states=%d", i+1, len(lines), line, len(states))
+	for i := 0; i < len(tokenizedLines); i++ {
+		parts := tokenizedLines[i]
+		if i != lastToken {
+			nextParts := tokenizedLines[i+1]
+			if parts[1] == nextParts[1] {
+				if parts[0] == "mul" && parts[2] == "0" && nextParts[0] == "add" {
+					parts = nextParts
+					parts[0] = "set"
+					i++
+				} else if parts[0] == "eql" && nextParts[0] == "eql" && nextParts[2] == "0" {
+					parts[0] = "neq"
+					i++
+				}
+			}
+		}
+		log.Printf("%d of %d %v, states=%d", i+1, len(lines), parts, len(states))
 
-		command := commands[parts[0]]
-
-		if command == operationInp {
+		if parts[0] == "add" && parts[2] == "0" {
+			continue
+		} else if parts[0] == "inp" {
 			newStates := reduceStates(&states, &statesSerials, reduceFn)
 			states = make([]State, 0, len(newStates)*9)
 			statesSerials = make([]int64, 0, len(newStates)*9)
@@ -125,22 +118,23 @@ func solve_d24(filename string, reduceFn func(v1, v2 int64) int64) int64 {
 			register1 := registers[parts[1]]
 			for state, serial := range newStates {
 				for digit := value_t(1); digit <= 9; digit++ {
-					set(&state, register1, digit)
+					register1.set(&state, digit)
 					states = append(states, state)
 					statesSerials = append(statesSerials, serial*10+int64(digit))
 				}
 			}
 		} else {
+			command := commands[parts[0]]
 			register1, useRegister2, register2, value2 := parseOperands(parts[1], parts[2])
 			for index, state := range states {
-				v1 := get(&state, register1)
+				v1 := register1.get(&state)
 				var v2 value_t
 				if useRegister2 {
-					v2 = get(&state, register2)
+					v2 = register2.get(&state)
 				} else {
 					v2 = value2
 				}
-				set(&state, register1, calc(command, v1, v2))
+				register1.set(&state, command(v1, v2))
 				states[index] = state
 			}
 		}
